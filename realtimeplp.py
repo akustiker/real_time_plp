@@ -10,11 +10,95 @@ License:     MIT License (https://opensource.org/licenses/MIT)
 
 from dataclasses import dataclass, field
 from typing import Any
+import time
 
 import librosa
 import numpy as np
 from numpy._globals import _NoValue
 from scipy import signal
+
+
+def infer_ratio_phase(taps, tempo, verbose=True):
+    """
+    Estimate metric ratio and phase offset from user taps.
+
+    Parameters
+    ----------
+    taps : list of float
+        Tap times in seconds (absolute or relative).
+    tempo : float
+        Current tempo from PLP (in BPM).
+
+    Returns
+    -------
+    ratio : float
+        Estimated metrical level (1.0 = beat, 2.0 = eighths, 1.5 = triplets, ...).
+    phase_offset : float
+        Phase offset within beat cycle [0, 1).
+    confidence : float
+        0–1 confidence based on IOI consistency.
+    """
+
+    if len(taps) < 2:
+        return None, None, 0.0  # need at least 2 taps
+
+    # --- compute IOIs and mean period ---
+    iois = np.diff(taps)
+    mean_ioi = np.mean(iois)
+    std_ioi = np.std(iois)
+    beat_period = 60.0 / tempo
+
+    # --- ratio estimation ---
+    raw_ratio = beat_period / mean_ioi
+    possible_ratios = np.array([0.25, 0.333, 0.5, 0.666, 1.0, 1.5, 2.0, 3.0, 4.0])
+    ratio = possible_ratios[np.argmin(np.abs(possible_ratios - raw_ratio))]
+
+    # --- phase offset (from most recent tap) ---
+    last_tap = taps[-1]
+    phase = (last_tap % beat_period) / beat_period  # fraction of current beat
+    phase_offset = np.mod(round(phase * ratio, 3), 1.0)
+
+    # --- confidence ---
+    confidence = float(np.clip(1.0 - (std_ioi / mean_ioi), 0.0, 1.0))
+
+    if verbose:
+        print(f"tempo={tempo:.1f} BPM | raw_ratio={raw_ratio:.2f} → ratio={ratio}")
+        print(f"phase_offset={phase_offset:.2f} | confidence={confidence:.2f}")
+
+    return ratio, phase_offset, confidence
+
+
+@dataclass
+class HumanGuidance:
+    """Manages human-in-the-loop control of PLP ratio and phase offset."""
+
+    ratio: float = 1.0
+    phase_offset: float = 0.0
+    confidence: float = 0.0
+    decay_time: float = 10.0  # seconds before fade-out starts
+    fade_speed: float = 0.05  # how quickly to fade back to auto mode
+    last_update: float = field(default_factory=time.time)
+
+    def update_from_taps(self, taps, tempo):
+        """Update guidance parameters from user taps."""
+        ratio, phase, conf = infer_ratio_phase(taps, tempo, verbose=False)
+        if ratio is not None and conf > 0.7:
+            self.ratio = ratio
+            self.phase_offset = phase
+            self.confidence = conf
+            self.last_update = time.time()
+
+    def apply_to_plp(self, plp):
+        """Apply or decay guidance parameters to PLP in real time."""
+        elapsed = time.time() - self.last_update
+        if elapsed < self.decay_time:
+            # actively guided
+            plp.ratio = self.ratio
+            plp.phase_offset = self.phase_offset
+        else:
+            # decay smoothly toward neutral values
+            plp.ratio += self.fade_speed * (1.0 - plp.ratio)
+            plp.phase_offset *= 1.0 - self.fade_speed
 
 
 @dataclass
@@ -231,6 +315,10 @@ class PredominantLocalPulse:
     lookahead: int = 0
     H: int = field(default=1, repr=False)
 
+    # New parameters for metric level and phase
+    ratio: float = 1  # metric level multiplier (1.0 = beat, 1.5 = triplets)
+    phase_offset: float = 0  # phase within cycle [0,1)
+
     stability: float = field(default=0, init=False, repr=False)
     current_tempo: float = field(default=0, init=False, repr=False)
     _pulse_buffer: np.ndarray = field(init=False, repr=False)
@@ -284,6 +372,12 @@ class PredominantLocalPulse:
             n=0,
             tempogram=tempogram,
         )  # n=0: Arrays have only 1 column
+        # Apply ratio and phase offset
+        kernel.x = self.win * np.cos(
+            2
+            * np.pi
+            * (kernel.t * kernel.omega * self.ratio - kernel.phase - self.phase_offset)
+        )
         # Overlapp-Add new kernel to buffer
         self._pulse_buffer = self._pulse_buffer + kernel.x
         # Set current tempo
@@ -455,9 +549,13 @@ class RealTimeBeatTracker:
     tempogram: Tempogram
     plp: PredominantLocalPulse
     cs: ControlSignals
+    guidance = HumanGuidance(ratio=2)
 
     def process(self, audio_frame: np.ndarray) -> bool:
         """Run Beat Tracker Frame for Frame."""
+        
+        # 1. Apply human guidance before processing this frame
+        self.guidance.apply_to_plp(self.plp)
 
         activation_frame = self.activation.process(audio_frame)
         tempogram_frame = self.tempogram.process(activation_frame)
