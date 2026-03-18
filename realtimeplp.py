@@ -140,9 +140,9 @@ class Tempogram:
         # NOTE: _tempo_buffer could be only half the size, like described in TISMIR.
         #       See half_window_method where we only roll the left half of the buffer.
         self._tempo_buffer = np.zeros(self.N)
-        assert (
-            self.framerate != 1
-        ), f"Tempogram samplerate is not set: fs = {self.framerate}"
+        assert self.framerate != 1, (
+            f"Tempogram samplerate is not set: fs = {self.framerate}"
+        )
         self.tempogram_frame = np.array([])
 
     @property
@@ -195,6 +195,11 @@ class Kernel:
     t_end: int
     t: np.ndarray
     x: np.ndarray
+    # New user parameters for tempo scaling and phase shift
+    # factor like 0.25 for quarter tempo
+    freq_scale: float = field(default=1, init=False, repr=False)
+    # [0, 1] as fraction of period
+    phase_shift: float = field(default=1, init=False, repr=False)
 
     @classmethod
     def from_plp(
@@ -211,14 +216,23 @@ class Kernel:
         """Init Kernel from PLP arguments."""
         k = np.argmax(tempogram[:, n])
         tempo = Theta[k]
+        tempo_new = tempo * cls.freq_scale
+        k_new = int(np.argmin(np.abs(Theta - tempo_new)))
         omega = (tempo / 60) / framerate
+        omega_new = (tempo_new / 60) / framerate
         c = X[k, n]
+        c_new = X[k_new, n]
         phase = -np.angle(c) / (2 * np.pi)
+        # wrap circular phase to [0, 1]
+        phase_new = np.mod((-np.angle(c_new) / (2 * np.pi)) + cls.phase_shift, 1.0)
         t_start = n * H
         t_end = t_start + N
         t = np.arange(t_start, t_end)
         x = win * np.cos(2 * np.pi * (t * omega - phase))
-        return cls(n, k, tempo, omega, c, phase, t_start, t_end, t, x)
+        x_new = win * np.cos(2 * np.pi * (t * omega_new - phase_new))
+        return cls(
+            n, k, tempo_new, omega_new, c_new, phase_new, t_start, t_end, t, x_new
+        )
 
 
 @dataclass
