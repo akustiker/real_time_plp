@@ -197,7 +197,7 @@ class Kernel:
     x: np.ndarray
     # New user parameters for tempo scaling and phase shift
     # factor like 0.25 for quarter tempo
-    freq_scale: float = field(default=1, init=False, repr=False)
+    freq_scale: float = field(default=2 / 3, init=False, repr=False)
     # [0, 1] as fraction of period
     phase_shift: float = field(default=1, init=False, repr=False)
 
@@ -224,7 +224,7 @@ class Kernel:
         c_new = X[k_new, n]
         phase = -np.angle(c) / (2 * np.pi)
         # wrap circular phase to [0, 1]
-        phase_new = np.mod((-np.angle(c_new) / (2 * np.pi)) + cls.phase_shift, 1.0)
+        phase_new = -np.angle(c_new) / (2 * np.pi) + cls.phase_shift
         t_start = n * H
         t_end = t_start + N
         t = np.arange(t_start, t_end)
