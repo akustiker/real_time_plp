@@ -197,9 +197,13 @@ class Kernel:
     x: np.ndarray
     # New user parameters for tempo scaling and phase shift
     # factor like 0.25 for quarter tempo
-    freq_scale: float = field(default=2 / 3, init=False, repr=False)
+    freq_scale: float = field(default=1 / 3, init=False, repr=False)
     # [0, 1] as fraction of period
     phase_shift: float = field(default=1, init=False, repr=False)
+
+    # Class-level state for unwrapping the true phase at the center of the window
+    _last_unwrapped_center_phase: float = 0.0
+    _is_first_frame: bool = True
 
     @classmethod
     def from_plp(
@@ -217,22 +221,54 @@ class Kernel:
         k = np.argmax(tempogram[:, n])
         tempo = Theta[k]
         tempo_new = tempo * cls.freq_scale
-        k_new = int(np.argmin(np.abs(Theta - tempo_new)))
         omega = (tempo / 60) / framerate
         omega_new = (tempo_new / 60) / framerate
         c = X[k, n]
-        c_new = X[k_new, n]
         phase = -np.angle(c) / (2 * np.pi)
-        # wrap circular phase to [0, 1]
-        phase_new = -np.angle(c_new) / (2 * np.pi) + cls.phase_shift
+
+        # To scale a tempo smoothly without waveform jumps, we must preserve and scale an
+        # "unwrapped" continuous phase (like an odometer), rather than the original wrapping
+        # 0-to-2pi phase (like a clock).
+
+        # First, find the local true wrapped phase exactly at the center of the kernel window
+        wrapped_center_phase = (N / 2) * omega - phase
+
+        if cls._is_first_frame:
+            # Initialization
+            cls._last_unwrapped_center_phase = wrapped_center_phase
+            cls._is_first_frame = False
+            unwrapped_center_phase = wrapped_center_phase
+        else:
+            # Estimate where the continuous, unwrapped phase *should* be right now,
+            # assuming it advanced smoothly at the localized tempo frequencies.
+            expected_unwrapped_phase = cls._last_unwrapped_center_phase + omega * H
+
+            # Now anchor the guess back to reality: We know the actual, physical wrapped phase
+            # at the center is `wrapped_center_phase`. Therefore, the true unwrapped phase
+            # MUST be exactly `wrapped_center_phase` + some integer number of full wave cycles.
+            # We locate the closest discrete integer jump that matches our expectation.
+            full_cycles_offset = np.round(
+                expected_unwrapped_phase - wrapped_center_phase
+            )
+            unwrapped_center_phase = wrapped_center_phase + full_cycles_offset
+
+            # Save for the next frame's expectation
+            cls._last_unwrapped_center_phase = unwrapped_center_phase
+
+        # Scale the unbroken continuous phase to create the polyrhythm phase timeline.
+        new_unwrapped_center_phase = (
+            unwrapped_center_phase * cls.freq_scale + cls.phase_shift
+        )
+
+        # Rearrange the linear formula backwards to derive the local kernel's standard phase input
+        phase_new = (N / 2) * omega_new - new_unwrapped_center_phase
+
         t_start = n * H
         t_end = t_start + N
         t = np.arange(t_start, t_end)
         x = win * np.cos(2 * np.pi * (t * omega - phase))
         x_new = win * np.cos(2 * np.pi * (t * omega_new - phase_new))
-        return cls(
-            n, k, tempo_new, omega_new, c_new, phase_new, t_start, t_end, t, x_new
-        )
+        return cls(n, k, tempo_new, omega_new, c, phase_new, t_start, t_end, t, x_new)
 
 
 @dataclass
