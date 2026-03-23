@@ -195,11 +195,6 @@ class Kernel:
     t_end: int
     t: np.ndarray
     x: np.ndarray
-    # New user parameters for tempo scaling and phase shift
-    # factor like 0.25 for quarter tempo
-    freq_scale: float = field(default=1 / 3, init=False, repr=False)
-    # [0, 1] as fraction of period
-    phase_shift: float = field(default=1, init=False, repr=False)
 
     # Class-level state for unwrapping the true phase at the center of the window
     _last_unwrapped_center_phase: float = 0.0
@@ -216,11 +211,13 @@ class Kernel:
         X: np.ndarray,
         n: int,
         tempogram: np.ndarray,
+        tempo_scale: float = 1.0,
+        phase_shift: float = 0.0,
     ):
         """Init Kernel from PLP arguments."""
         k = np.argmax(tempogram[:, n])
         tempo = Theta[k]
-        tempo_new = tempo * cls.freq_scale
+        tempo_new = tempo * tempo_scale
         omega = (tempo / 60) / framerate
         omega_new = (tempo_new / 60) / framerate
         c = X[k, n]
@@ -256,9 +253,7 @@ class Kernel:
             cls._last_unwrapped_center_phase = unwrapped_center_phase
 
         # Scale the unbroken continuous phase to create the polyrhythm phase timeline.
-        new_unwrapped_center_phase = (
-            unwrapped_center_phase * cls.freq_scale + cls.phase_shift
-        )
+        new_unwrapped_center_phase = unwrapped_center_phase * tempo_scale + phase_shift
 
         # Rearrange the linear formula backwards to derive the local kernel's standard phase input
         phase_new = (N / 2) * omega_new - new_unwrapped_center_phase
@@ -280,6 +275,8 @@ class PredominantLocalPulse:
     Theta: np.ndarray = field(default_factory=lambda: np.arange(60, 181, 1))
     lookahead: int = 0
     H: int = field(default=1, repr=False)
+    tempo_scale: float = 1.0
+    phase_shift: float = 0.0
 
     stability: float = field(default=0, init=False, repr=False)
     current_tempo: float = field(default=0, init=False, repr=False)
@@ -316,7 +313,10 @@ class PredominantLocalPulse:
         """Get the current plp buffer (_pulse_buffer)."""
         return self._pulse_buffer
 
-    def process(self, tempogram_frame: np.ndarray) -> bool:
+    def process(
+        self,
+        tempogram_frame: np.ndarray,
+    ) -> bool:
         """Process Input Frame to Output Frame."""
         # ROLL BUFFER with new block; set new values to zero
         self._pulse_buffer = np.roll(self._pulse_buffer, -self.H)
@@ -333,6 +333,8 @@ class PredominantLocalPulse:
             X=tempogram_frame,
             n=0,
             tempogram=tempogram,
+            tempo_scale=self.tempo_scale,
+            phase_shift=self.phase_shift,
         )  # n=0: Arrays have only 1 column
         # Overlapp-Add new kernel to buffer
         self._pulse_buffer = self._pulse_buffer + kernel.x
@@ -506,8 +508,15 @@ class RealTimeBeatTracker:
     plp: PredominantLocalPulse
     cs: ControlSignals
 
+    tempo_scale: float = 1.0
+    phase_shift: float = 0.0
+
     def process(self, audio_frame: np.ndarray) -> bool:
         """Run Beat Tracker Frame for Frame."""
+
+        # Sync runtime parameters down to the PLP component
+        self.plp.tempo_scale = self.tempo_scale
+        self.plp.phase_shift = self.phase_shift
 
         activation_frame = self.activation.process(audio_frame)
         tempogram_frame = self.tempogram.process(activation_frame)
@@ -524,6 +533,8 @@ class RealTimeBeatTracker:
         N_time=6,
         Theta=np.arange(60, 181, 1),
         lookahead=0,
+        tempo_scale=1.0,
+        phase_shift=0.0,
     ):
         """Create Beat Tracker for Real-Time"""
         act = BeatActivation(N=N, H=H, samplerate=samplerate)
@@ -532,7 +543,14 @@ class RealTimeBeatTracker:
             N_time=N_time, framerate=(samplerate / H), Theta=Theta, lookahead=lookahead
         )
         cs = ControlSignals(plp=pulse)
-        return cls(activation=act, tempogram=tempo, plp=pulse, cs=cs)
+        return cls(
+            activation=act,
+            tempogram=tempo,
+            plp=pulse,
+            cs=cs,
+            tempo_scale=tempo_scale,
+            phase_shift=phase_shift,
+        )
 
 
 @dataclass
