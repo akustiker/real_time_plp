@@ -11,10 +11,10 @@ from matplotlib.animation import FuncAnimation
 
 from realtimeplp import BeatAnalyzer, RealTimeBeatTracker
 
-OUTPUT = "daga2026_basic_groove_8th_1_3_tempo_scaling.mp4"
+OUTPUT = "daga2026_basic_groove_8th_1_2_tempo_scaling.mp4"
 
 TESTAUDIO = "assets/audio/basic_groove_8th.wav"
-TEMPO_SCALE = 1 / 3
+TEMPO_SCALE = 1 / 2
 PHASE_SHIFT = 0.0
 
 # Setup audio streaming and beat tracking
@@ -53,7 +53,7 @@ w = scipy.signal.get_window(w_type, N)
 # Setup plot
 fig = plt.figure(dpi=300, figsize=(6, 3))  # Increased figure size
 ax = plt.axes(xlim=(-3, 3), ylim=(-1.1, 1.1))
-ax.set_title(r"Basic Drum Groove (8th Notes) with 1/3 Tempo Scaling")
+ax.set_title(r"Basic Drum Groove (8th Notes) with 1/2 Tempo Scaling")
 ax.set_xlabel("Time (seconds)")
 ax.set_ylabel("PLP")
 # ax.axhline(0, c="C7", ls=":", zorder=1)

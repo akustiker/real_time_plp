@@ -11,7 +11,11 @@ from matplotlib.animation import FuncAnimation
 
 from realtimeplp import BeatAnalyzer, RealTimeBeatTracker
 
-TESTAUDIO = "assets/audio/DrumBeat.wav"
+OUTPUT = "daga2026_basic_groove_8th_1_2_tempo_1_4_phase.mp4"
+
+TESTAUDIO = "assets/audio/basic_groove_8th.wav"
+TEMPO_SCALE = 1 / 2
+PHASE_SHIFT = 1 / 4
 
 # Setup audio streaming and beat tracking
 SR = librosa.get_samplerate(TESTAUDIO)
@@ -28,6 +32,8 @@ tracker = RealTimeBeatTracker.from_args(
     N_time=6,
     Theta=np.arange(30, 300, 1),
     lookahead=0,
+    tempo_scale=TEMPO_SCALE,
+    phase_shift=PHASE_SHIFT,
 )
 analyzer = BeatAnalyzer(tracker)
 
@@ -47,7 +53,7 @@ w = scipy.signal.get_window(w_type, N)
 # Setup plot
 fig = plt.figure(dpi=300, figsize=(6, 3))  # Increased figure size
 ax = plt.axes(xlim=(-3, 3), ylim=(-1.1, 1.1))
-ax.set_title(r"PLP Buffer")
+ax.set_title(r"Basic Drum Groove (8th Notes) with 1/2 Tempo and 1/4 Phase")
 ax.set_xlabel("Time (seconds)")
 ax.set_ylabel("PLP")
 # ax.axhline(0, c="C7", ls=":", zorder=1)
@@ -165,7 +171,7 @@ os.system(
     "ffmpeg -y -i plp_buffer.mp4 -i clicks.wav \
     -map 0:v -map 1:a -c:v copy -c:a aac -b:a 320k -ar 44100 -shortest output.mp4"
 )
-os.system("mv output.mp4 plp_buffer.mp4")
+os.system("mv output.mp4 " + OUTPUT)
 # os.system('rm clicks.wav')
 
 # Add Audio to Video
