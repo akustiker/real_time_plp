@@ -253,6 +253,7 @@ class Kernel:
             cls._last_unwrapped_center_phase = unwrapped_center_phase
 
         # Scale the unbroken continuous phase to create the polyrhythm phase timeline.
+        # `phase_shift` acts as a fractional offset of a cycle in the newly scaled sequence.
         new_unwrapped_center_phase = unwrapped_center_phase * tempo_scale - phase_shift
 
         # Rearrange the linear formula backwards to derive the local kernel's standard phase input
